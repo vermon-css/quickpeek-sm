@@ -1,0 +1,67 @@
+"Games"
+{
+	"#default"
+	{
+		"Offsets"
+		{
+			"base_server_get_client"
+			{
+				"library"	"engine"
+				"linux"		"7"
+			}
+			
+			"base_combat_weapon_send_weapon_anim"
+			{
+				"library"	"server"
+				"linux"		"208"
+			}
+			
+			"base_player_delay"
+			{
+				"linux"		"0xa44"
+			}
+			
+			"base_client_entity_index"
+			{
+				"linux"		"0x10"
+			}
+			
+			"base_client_delta_tick"
+			{
+				"linux"		"0xd4"
+			}
+			
+			"game_client_send_sound_jnz"
+			{
+				"linux"		"0x54"
+			}
+			
+			"base_player_spawn_stop_replay_mode_call"
+			{
+				"linux"		"0x423"
+			}
+		
+		}
+		
+		"Signatures"
+		{
+			"base_client_free_baselines"
+			{
+				"library"	"engine"
+				"linux"		"@_ZN11CBaseClient13FreeBaselinesEv"
+			}
+			
+			"game_client_send_sound"
+			{
+				"library"	"engine"
+				"linux"		"@_ZN11CGameClient9SendSoundER11SoundInfo_tb"
+			}
+			
+			"base_player_spawn"
+			{
+				"library"	"server"
+				"linux"		"@_ZN11CBasePlayer5SpawnEv"
+			}
+		}	
+	}
+}

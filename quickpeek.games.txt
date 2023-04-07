@@ -1,0 +1,78 @@
+"Games"
+{
+	"#default"
+	{
+		"Offsets"
+		{
+			"base_server_get_client"
+			{
+				"library"	"engine"
+				"linux"		"7"
+				"windows"	"6"
+			}
+			
+			"base_combat_weapon_send_weapon_anim"
+			{
+				"library"	"server"
+				"linux"		"237"
+				"windows"	"237"
+			}
+			
+			"base_player_delay"
+			{
+				"linux"		"0xb58"
+				"windows"	"0xb44"
+			}
+			
+			"base_client_entity_index"
+			{
+				"linux"		"0x10"
+				"windows"	"0x10"
+			}
+			
+			"base_client_delta_tick"
+			{
+				"linux"		"0xcc"
+				"windows"	"0xcc"
+			}
+			
+			"game_client_send_sound_jnz"
+			{
+				"linux"		"0x34"
+				"windows"	"0x4d"
+			}
+			
+			"base_player_spawn_stop_replay_mode_call"
+			{
+				"linux"		"0x5be"
+				"windows"	"0x53a"
+			}
+		
+		}
+		
+		"Signatures"
+		{
+			"base_client_free_baselines"
+			{
+				"library"	"engine"
+				"linux"		"@_ZN11CBaseClient13FreeBaselinesEv"
+				"windows"	"\x56\x8B\xF1\x8B\x8E\xDC\x00\x00\x00"
+			}
+			
+			"game_client_send_sound"
+			{
+				"library"	"engine"
+				"linux"		"@_ZN11CGameClient9SendSoundER11SoundInfo_tb"
+				"windows"	"\x55\x8B\xEC\x81\xEC\xC8\x00\x00\x00\x56\x8B\xF1"
+			}
+			
+			"base_player_spawn"
+			{
+				"library"	"server"
+				"linux"		"@_ZN11CBasePlayer5SpawnEv"
+				"windows"	"\x55\x8B\xEC\x83\xEC\x38\x56\x8B\xF1\x57"
+			}
+		}	
+	}
+}
+
