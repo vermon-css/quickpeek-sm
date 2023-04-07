@@ -44,13 +44,7 @@
 		}
 		
 		"Signatures"
-		{
-			"base_client_free_baselines"
-			{
-				"library"	"engine"
-				"linux"		"@_ZN11CBaseClient13FreeBaselinesEv"
-			}
-			
+		{			
 			"game_client_send_sound"
 			{
 				"library"	"engine"
