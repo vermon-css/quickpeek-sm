@@ -366,7 +366,9 @@ static void switch_peek_target(int index, int target) {
 	hide_misc_hud(target);
 
 	int client = SDKCall(get_client, index - 1) - 4;
+
 	StoreToAddress(view_as<Address>(client + offsets.base_client_delta_tick), -1, NumberType_Int32, false);
+	StoreToAddress(view_as<Address>(client + offsets.base_client_entity_index), target, NumberType_Int32, false);
 
 	player_data_peek_target[index] = target;
 	player_data_hud_update_time[index] = 0.0;
