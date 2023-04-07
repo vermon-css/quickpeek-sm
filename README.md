@@ -11,6 +11,8 @@ At the moment, there may be a problem with the sounds while peeking.
 Plugin was tested only in CS:S but the concept should work in any other game (may need to update offsets).
 
 # Installation
+At least SourceMod **1.11.0.6822** is requred.
+
 Simply place **quickpeek.smx** and **quickpeek.games.txt** in  
 *addons/sourcemod/plugins* and *addons/sourcemod/gamedata* folders respectively.
 
@@ -37,13 +39,9 @@ It is disabled by default.
 This plugin uses *replay system* that allows you to literally take place of any player by receiving the same frames that were generated for them.
 
 There is **sv_maxreplay** cvar which determines the number of seconds the engine keeps for replaying.  
-Since the idea of the plugin is real-time spectating, the plugin, with some excess, sets this cvar to **1.0** and forces to send only the most recent frames.  
-But in order to drastically change the flow of frames later, need to fully update game information on the client. And it needs to send a lot of packets quickly.  
+Since the idea of the plugin is real-time peeking, the plugin, with some excess, sets this cvar to **1.0** and forces to send only the most recent frames.  
+But in order to drastically change the flow of frames later, need to fully update game information on the client. And it needs to send a lot of data quickly.  
 Setting high updaterate will help you to increase speed of this.
-
-Also, we can't send a request for a full update too often, until the current update is completed.  
-The plugin has an internal mechanism that takes into account ping to cope with it.  
-I believe there are better options to find out whether the client is fully updated or not, but this one is enough.
 
 # Links
 [Demonstration](https://www.youtube.com/watch?v=ZoUhiFdZ-2g)  
