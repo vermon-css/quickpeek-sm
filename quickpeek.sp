@@ -12,7 +12,7 @@ public Plugin myinfo = {
 	name = "QuickPeek",
 	author = "VerMon",
 	description = "Observe other players' actions while in-game",
-	version = "1.1.0",
+	version = "1.1.1",
 	url = "https://steamcommunity.com/profiles/76561198141196062"
 }
 
