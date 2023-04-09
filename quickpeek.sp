@@ -351,10 +351,9 @@ static void stop_peeking(int index) {
 	SetEntData(index, offsets.base_player_replay_entity, 0, 4, false);
 
 	kill_cam_message(index, 0, 0, 0);
-	
 	hide_misc_hud(index);
 
-	ShowSyncHudText(index, sync_hud, "");
+	ClearSyncHud(index, sync_hud);
 }
 
 static void switch_peek_target(int index, int target) {
