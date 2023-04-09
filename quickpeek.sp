@@ -6,7 +6,6 @@
 #define JNZ_OPCODE 0x85
 #define NOP_OPCODE 0x90
 
-#define ACT_VM_PRIMARYATTACK 180
 #define EF_NODRAW 32
 #define HIDEHUD_MISCSTATUS 1 << 6
 
@@ -44,6 +43,10 @@ Handle sync_hud;
 Handle get_client;
 Handle send_weapon_anim;
 
+// since different engines have their own values, we need this instead of #define
+int act_vm_primary_attack;
+
+// used only for plugin unload
 char stop_replay_mode_call[6];
 
 float player_data_hud_update_time[MAXPLAYERS + 1];
@@ -55,6 +58,9 @@ bool player_data_block_angles[MAXPLAYERS + 1];
 public void OnPluginStart() {
 	GameData game_data = LoadGameConfigFile("quickpeek.games");
 	load_offsets(game_data);
+
+	// for example, CS:S v34 has 178
+	act_vm_primary_attack = GetEngineVersion() != Engine_SourceSDK2006 ? 180 : 178;
 
 	int send_sound = view_as<int>(game_data.GetMemSig("game_client_send_sound"));
 	StoreToAddress(view_as<Address>(send_sound + offsets.game_client_send_sound_jnz), JL_OPCODE, NumberType_Int8, true);
@@ -386,7 +392,7 @@ static void fix_peek_weapon_anim(int index) {
 	if (active_weapon != -1) {
 		int sequence = GetEntProp(active_weapon, Prop_Send, "m_nSequence");
 		if (sequence == 6 || sequence == 14)
-			SDKCall(send_weapon_anim, active_weapon, ACT_VM_PRIMARYATTACK);
+			SDKCall(send_weapon_anim, active_weapon, act_vm_primary_attack);
 	}
 }
 
