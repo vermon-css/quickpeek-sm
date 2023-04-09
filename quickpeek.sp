@@ -7,7 +7,6 @@
 #define NOP_OPCODE 0x90
 
 #define EF_NODRAW 32
-#define HIDEHUD_MISCSTATUS 1 << 6
 
 public Plugin myinfo = {
 	name = "QuickPeek",
@@ -345,7 +344,6 @@ static void start_peeking(int index, int target) {
 	kill_cam_message(index, 4, target, index);
 
 	fix_peek_weapon_anim(target);
-	hide_misc_hud(target);
 	
 	player_data_peek_target[index] = target;
 	player_data_hud_update_time[index] = 0.0;
@@ -357,7 +355,6 @@ static void stop_peeking(int index) {
 	SetEntData(index, offsets.base_player_replay_entity, 0, 4, false);
 
 	kill_cam_message(index, 0, 0, 0);
-	hide_misc_hud(index);
 
 	ClearSyncHud(index, sync_hud);
 }
@@ -368,7 +365,6 @@ static void switch_peek_target(int index, int target) {
 	kill_cam_message(index, 4, target, index);
 	
 	fix_peek_weapon_anim(target);
-	hide_misc_hud(target);
 
 	int client = SDKCall(get_client, index - 1) - 4;
 
@@ -394,11 +390,6 @@ static void fix_peek_weapon_anim(int index) {
 		if (sequence == 6 || sequence == 14)
 			SDKCall(send_weapon_anim, active_weapon, act_vm_primary_attack);
 	}
-}
-
-static void hide_misc_hud(int index) {
-	int hide_hud = GetEntProp(index, Prop_Send, "m_iHideHUD");
-	SetEntProp(index, Prop_Send, "m_iHideHUD", hide_hud | HIDEHUD_MISCSTATUS);
 }
 
 static void load_offsets(GameData gd) {
