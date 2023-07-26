@@ -48,6 +48,8 @@ int act_vm_primary_attack;
 // used only for plugin unload
 char stop_replay_mode_call[6];
 
+ConVar sv_stressbots;
+
 float player_data_hud_update_time[MAXPLAYERS + 1];
 int player_data_peek_target[MAXPLAYERS + 1];
 int player_data_old_buttons[MAXPLAYERS + 1];
@@ -85,6 +87,10 @@ public void OnPluginStart() {
 
 	ConVar sv_maxreplay = FindConVar("sv_maxreplay");
 	sv_maxreplay.FloatValue = 1.0;
+
+	sv_stressbots = FindConVar("sv_stressbots");
+	sv_stressbots.Flags = 0;
+	sv_stressbots.BoolValue = true;
 
 	RegConsoleCmd("qpeek", quickpeek_console_command);
 
@@ -300,7 +306,7 @@ Action unhold_quickpeek_command_listener(int index, const char[] command, int ar
 }
 
 static bool is_valid_peek_target(int index) {
-	if (!IsClientInGame(index) || IsFakeClient(index) || !IsPlayerAlive(index) || GetEntProp(index, Prop_Send, "m_fEffects") & EF_NODRAW)
+	if (!IsClientInGame(index) || !IsPlayerAlive(index) || GetEntProp(index, Prop_Send, "m_fEffects") & EF_NODRAW || (IsFakeClient(index) && !sv_stressbots.BoolValue))
 		return false;
 
 	return true;
