@@ -51,7 +51,9 @@ char stop_replay_mode_call[6];
 ConVar sv_stressbots;
 
 float player_data_hud_update_time[MAXPLAYERS + 1];
-int player_data_peek_target[MAXPLAYERS + 1];
+int player_data_targets[MAXPLAYERS + 1][MAXPLAYERS];
+int player_data_targets_count[MAXPLAYERS];
+int player_data_last_target[MAXPLAYERS + 1];
 int player_data_old_buttons[MAXPLAYERS + 1];
 int player_data_queue_action[MAXPLAYERS + 1];
 bool player_data_block_angles[MAXPLAYERS + 1];
@@ -88,6 +90,7 @@ public void OnPluginStart() {
 	ConVar sv_maxreplay = FindConVar("sv_maxreplay");
 	sv_maxreplay.FloatValue = 1.0;
 
+	// enable peeking on fakeplayers
 	sv_stressbots = FindConVar("sv_stressbots");
 	sv_stressbots.Flags = 0;
 	sv_stressbots.BoolValue = true;
@@ -109,12 +112,8 @@ public void OnPluginStart() {
 
 public void OnPluginEnd() {
 	for (int i = 1; i <= MaxClients; ++i)
-		if (IsClientInGame(i) && IsPlayerAlive(i)) {
-			int replay_entity = GetEntData(i, offsets.base_player_replay_entity, 4);
-
-			if (replay_entity)
+		if (IsClientInGame(i) && IsPlayerAlive(i) && peek_target(i))
 				stop_peeking(i);
-		}
 
 	GameData game_data = LoadGameConfigFile("quickpeek.games");
 
@@ -128,7 +127,8 @@ public void OnPluginEnd() {
 }
 
 public void OnClientPutInServer(int index) {
-	player_data_peek_target[index] = 1;
+	player_data_targets_count[index] = 0;
+	player_data_last_target[index] = 0;
 	player_data_hud_update_time[index] = 0.0;
 	player_data_old_buttons[index] = 0;
 	player_data_queue_action[index] = ACTION_NONE;
@@ -150,17 +150,12 @@ public void OnClientCookiesCached(int index) {
 }
 
 public void OnClientDisconnect(int index) {
-	int client = SDKCall(get_client, index - 1) - 4;
+	int client = get_base_client(index);
 	StoreToAddress(view_as<Address>(client + offsets.base_client_entity_index), index, NumberType_Int32, false);
 }
 
 public Action OnPlayerRunCmd(int index, int& buttons, int& impulse, float vel[3], float angles[3], int& weapon, int& sub_type, int& cmd_num, int& tick_count, int& seed, int mouse[2]) {
-	if (!IsPlayerAlive(index))
-		return Plugin_Continue;
-
-	int replay_entity = GetEntData(index, offsets.base_player_replay_entity, 4);
-
-	if (!replay_entity)
+	if (!IsPlayerAlive(index) || !peek_target(index))
 		return Plugin_Continue;
 
 	if (player_data_queue_action[index] != ACTION_STOP && player_data_queue_action[index] != ACTION_NEXT_TARGET_OR_STOP)
@@ -189,64 +184,119 @@ public void OnGameFrame() {
 		if (!IsClientInGame(i))
 			continue;
 
-		int replay_entity = GetEntData(i, offsets.base_player_replay_entity, 4);
+		int target = peek_target(i);
 
-		if (player_data_queue_action[i] != ACTION_STOP)
+		if (player_data_queue_action[i] != ACTION_STOP) {
 			if (IsPlayerAlive(i)) {
-				if (replay_entity && !is_valid_peek_target(replay_entity))
+				if (target && !is_valid_target(target))
 					// peek target is no longer valid (dead, just leaved the game, etc.)
 					player_data_queue_action[i] = ACTION_NEXT_TARGET_OR_STOP;
 			}
-			else if (replay_entity)
+			else if (target)
 				// our player just died
 				player_data_queue_action[i] = ACTION_STOP;
 			else
 				player_data_queue_action[i] = ACTION_NONE;
+		}
 
-		int client = SDKCall(get_client, i - 1) - 4;
+		int client = get_base_client(i);
 		int delta_tick = LoadFromAddress(view_as<Address>(client + offsets.base_client_delta_tick), NumberType_Int32);
 
 		// check whether client is fully updated or not to prevent host error (missing client entity)
 		if (delta_tick != -1) {
 			switch (player_data_queue_action[i]) {
 				case ACTION_START: {
-					int target = cycle_target(i, player_data_peek_target[i], true, false);
-					if (target)
+					player_data_targets_count[i] = 0;
+					
+					target = player_data_last_target[i];
+
+					if (!target || !is_valid_target(target))
+						target = find_new_target(i);
+						
+					if (target) {
+						// init array
+						player_data_targets[i][0] = target;
+						player_data_targets_count[i] = 1;
 						start_peeking(i, target);
+					}
 				}
 
 				case ACTION_STOP:
 					stop_peeking(i);
 
 				case ACTION_NEXT_TARGET: {
-					int target = cycle_target(i, player_data_peek_target[i], false, false);
-					if (target)
-						switch_peek_target(i, target);
+					int new_target = 0;
+
+					// last element: try to find another nearest target
+					if (player_data_targets[i][player_data_targets_count[i] - 1] == target) {
+						new_target = find_new_target(i);
+						
+						if (new_target)
+							add_target(i, new_target);
+					}
+
+					if (!new_target) {
+						int idx = get_used_target_index(i, target);
+						new_target = cycle_used_targets(i, idx);
+					}
+
+					if (new_target) {
+						switch_peek_target(i, new_target);
+						target = new_target;
+					}
 				}
 
 				case ACTION_PREV_TARGET: {
-					int target = cycle_target(i, player_data_peek_target[i], false, true);
-					if (target)
-						switch_peek_target(i, target);
+					int new_target = 0;
+
+					// first element: try to find another farest target
+					if (player_data_targets[i][0] == target) {
+						new_target = find_new_target(i, false);
+
+						if (new_target)
+							add_target(i, new_target, false);
+					}
+
+					if (!new_target) {
+						int idx = get_used_target_index(i, target);
+						new_target = cycle_used_targets(i, idx, true);
+					}
+
+					if (new_target) {
+						switch_peek_target(i, new_target);
+						target = new_target;
+					}
 				}
 
 				case ACTION_NEXT_TARGET_OR_STOP: {
-					int target = cycle_target(i, player_data_peek_target[i], true, false);
-					if (target)
-						switch_peek_target(i, target);
+					int idx = get_used_target_index(i, target);
+					int new_target = cycle_used_targets(i, idx);
+
+					if (!new_target) {
+						new_target = find_new_target(i);
+
+						if (new_target)
+							add_target(i, new_target);
+					}
+
+					if (new_target) {
+						remove_target(i, idx);
+						switch_peek_target(i, new_target);
+						target = new_target;
+					}
 					else
 						stop_peeking(i);
 				}
 			}
 
+			player_data_last_target[i] = target;
 			player_data_queue_action[i] = ACTION_NONE;
 		}
 
-		replay_entity = GetEntData(i, offsets.base_player_replay_entity, 4);
-
-		if (replay_entity && GetGameTime() >= player_data_hud_update_time[i] && IsClientInGame(replay_entity)) {
+		// IsClientInGame means a target can be disconnected and if we can't immediately process ACTION_NEXT_TARGET_OR_STOP after that
+		if (target && GetGameTime() >= player_data_hud_update_time[i] && IsClientInGame(target)) {
 			char buf[MAX_NAME_LENGTH];
-			GetClientName(replay_entity, buf, sizeof(buf));
+			GetClientName(target, buf, sizeof(buf));
 			
 			SetHudTextParams(-1.0, 0.65, 1.05, 255, 255, 255, 0, 0, 0.0, 0.0, 0.0);
 			ShowSyncHudText(i, sync_hud, buf);
@@ -276,9 +326,7 @@ Action quickpeek_console_command(int index, int args) {
 	if (!IsPlayerAlive(index))
 		return Plugin_Handled;
 
-	int replay_entity = GetEntData(index, offsets.base_player_replay_entity, 4);
-	
-	player_data_queue_action[index] = replay_entity ? ACTION_STOP : ACTION_START;
+	player_data_queue_action[index] = peek_target(index) ? ACTION_STOP : ACTION_START;
 	
 	return Plugin_Handled;
 }
@@ -287,9 +335,7 @@ Action hold_quickpeek_command_listener(int index, const char[] command, int args
 	if (!IsPlayerAlive(index))
 		return Plugin_Handled;
 
-	int replay_entity = GetEntData(index, offsets.base_player_replay_entity, 4);
-
-	if (!replay_entity)
+	if (!peek_target(index))
 		player_data_queue_action[index] = ACTION_START;
 
 	return Plugin_Handled;
@@ -299,45 +345,35 @@ Action unhold_quickpeek_command_listener(int index, const char[] command, int ar
 	if (!IsPlayerAlive(index))
 		return Plugin_Handled;
 
-	int replay_entity = GetEntData(index, offsets.base_player_replay_entity, 4);
-	player_data_queue_action[index] = replay_entity ? ACTION_STOP : ACTION_NONE;
+	player_data_queue_action[index] = peek_target(index) ? ACTION_STOP : ACTION_NONE;
 	
 	return Plugin_Handled;
 }
 
-static bool is_valid_peek_target(int index) {
-	if (!IsClientInGame(index) || !IsPlayerAlive(index) || GetEntProp(index, Prop_Send, "m_fEffects") & EF_NODRAW || (IsFakeClient(index) && !sv_stressbots.BoolValue))
-		return false;
-
-	return true;
+static bool is_valid_target(int index) {
+	return IsClientInGame(index) && IsPlayerAlive(index) && !(GetEntProp(index, Prop_Send, "m_fEffects") & EF_NODRAW) && (!IsFakeClient(index) || sv_stressbots.BoolValue)
 }
 
-static int bound_player_index(int index) {
-	if (index > MaxClients)
-		return 1;
+static int bound_target_index(int index, int target_index) {
+	if (target_index >= player_data_targets_count[index])
+		return 0;
 
-	if (index < 1)
-		return MaxClients;
+	if (target_index < 0)
+		return player_data_targets_count[index] - 1;
 
-	return index;
+	return target_index;
 }
 
-static int cycle_target(int index, int start_index, bool check_first, bool reverse) {
-	// {0, 1} -> {1, -1}
+static int cycle_used_targets(int index, int start_index, bool reverse=false) {
 	int step = 1 - 2 * view_as<int>(reverse);
-	
-	int search_index = bound_player_index(start_index + view_as<int>(check_first) * -step);
-	int end_index = bound_player_index(start_index + -step);
-	
-	do {
-		search_index = bound_player_index(search_index + step);
+	int idx = bound_target_index(index, start_index + step);
 
-		if (search_index == index)
-			continue;
-
-		if (is_valid_peek_target(search_index))
-			return search_index			
-	} while (search_index != end_index)
+	while (idx != start_index) {
+		if (is_valid_target(player_data_targets[index][idx]))
+			return player_data_targets[index][idx];
+			
+		idx = bound_target_index(index, idx + step);
+	}
 
 	return 0;
 }
@@ -348,20 +384,17 @@ static void start_peeking(int index, int target) {
 	SetEntData(index, offsets.base_player_replay_entity, target, 4, false);
 
 	kill_cam_message(index, 4, target, index);
-
 	fix_peek_weapon_anim(target);
 	
-	player_data_peek_target[index] = target;
 	player_data_hud_update_time[index] = 0.0;
 }
 
-static void stop_peeking(int index) {
+static void stop_peeking(int index) {	
 	SetEntDataFloat(index, offsets.base_player_delay, 0.0, false);
 	SetEntDataFloat(index, offsets.base_player_replay_end, -1.0, false);
 	SetEntData(index, offsets.base_player_replay_entity, 0, 4, false);
 
 	kill_cam_message(index, 0, 0, 0);
-
 	ClearSyncHud(index, sync_hud);
 }
 
@@ -369,17 +402,82 @@ static void switch_peek_target(int index, int target) {
 	SetEntData(index, offsets.base_player_replay_entity, target, 4, false);
 
 	kill_cam_message(index, 4, target, index);
-	
 	fix_peek_weapon_anim(target);
 
-	int client = SDKCall(get_client, index - 1) - 4;
+	int client = get_base_client(index);
 
 	StoreToAddress(view_as<Address>(client + offsets.base_client_delta_tick), -1, NumberType_Int32, false);
 	StoreToAddress(view_as<Address>(client + offsets.base_client_entity_index), target, NumberType_Int32, false);
 
-	player_data_peek_target[index] = target;
 	player_data_hud_update_time[index] = 0.0;
 }
+
+static void add_target(int index, int target, bool back=true) {
+	int pos = view_as<int>(!back) * player_data_targets_count[index];
+
+	while (pos--)
+		player_data_targets[index][pos + 1] = player_data_targets[index][pos];
+
+	pos = view_as<int>(back) * player_data_targets_count[index];
+	player_data_targets[index][pos] = target;
+	player_data_targets_count[index] += 1;
+}
+
+static void remove_target(int index, int remove_index) {
+	while (++remove_index != player_data_targets_count[index])
+		player_data_targets[index][remove_index - 1] = player_data_targets[index][remove_index];
+		
+	player_data_targets_count[index] -= 1;
+}
+
+static bool is_used_target(int index, int target) {
+	for (int i = 0; i < player_data_targets_count[index]; ++i)
+		if (player_data_targets[index][i] == target)
+			return true;
+			
+	return false;
+}
+
+static int get_used_target_index(int index, int target) {
+	for (int i = 0; i < player_data_targets_count[index]; ++i)
+		if (player_data_targets[index][i] == target)
+			return i;
+			
+	return -1;
+}
+
+static int find_new_target(int index, bool nearest=true) {
+	int target = 0;
+	float best_distance = 999999999999999.0 * view_as<int>(nearest);
+	
+	float origin[3];
+	GetClientAbsOrigin(index, origin);
+	
+	for (int i = 1; i <= MaxClients; ++i) {
+		if (index == i || is_used_target(index, i) || !is_valid_target(i))
+			continue;
+
+		float v[3];
+		GetClientAbsOrigin(i, v);
+
+		float dist = GetVectorDistance(origin, v) * (2 * view_as<int>(nearest) - 1);
+		
+		if (dist < best_distance) {
+			best_distance = dist;
+			target = i;
+		}
+	}
+
+	return target;
+}
+
+static int peek_target(int index) {
+	return GetEntData(index, offsets.base_player_replay_entity, 4);
+}
+
+static int get_base_client(int index) {
+	return SDKCall(get_client, index - 1) - 4;
+}			
 
 static void kill_cam_message(int index, int mode, int first, int second) {
 	BfWrite bf = view_as<BfWrite>(StartMessageOne("KillCam", index, USERMSG_RELIABLE | USERMSG_BLOCKHOOKS));
@@ -389,6 +487,7 @@ static void kill_cam_message(int index, int mode, int first, int second) {
 	EndMessage();
 }
 
+// it fixes viewmodels dissapearing, e.g. usp
 static void fix_peek_weapon_anim(int index) {
 	int active_weapon = GetEntPropEnt(index, Prop_Send, "m_hActiveWeapon");
 	if (active_weapon != -1) {
