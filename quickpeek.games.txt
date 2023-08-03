@@ -48,24 +48,11 @@
 				"windows"	"0xb44"
 			}
 
-			"base_client_send_net_msg_this_offset"
+			"base_client_send_net_msg_this"
 			{
 
 				"linux"		"0x0"
 				"windows"	"0x4"
-			}
-			
-			// opcodes
-			"game_client_send_sound_jnz"
-			{
-				"linux"		"0x34"
-				"windows"	"0x4d"
-			}
-			
-			"base_player_spawn_stop_replay_mode_call"
-			{
-				"linux"		"0x5be"
-				"windows"	"0x53a"
 			}
 		}
 		
@@ -100,6 +87,44 @@
 			}
 		}
 		
+		"Addresses"
+		{
+			"game_client_send_sound_jnz"
+			{
+				"signature"	"game_client_send_sound"
+				
+				"linux"
+				{
+					"offset"	"0x34"
+				}
+				
+				"windows"
+				{
+					"offset"	"0x4d"
+				}
+			}
+			
+			"base_player_spawn_stop_replay_mode_call"
+			{
+				"signature"	"base_player_spawn"
+				
+				"linux"
+				{
+					"offset"	"0x5be"
+				}
+				
+				"windows"
+				{
+					"offset"	"0x53a"
+				}
+			}
+		}
+		
+		"Keys"
+		{
+			"act_vm_primary_attack"		"180"
+		}
+		
 		"Functions"
 		{
 			"game_client_send_net_msg"
@@ -121,6 +146,62 @@
 					}	
 				}
 			}
+		}
+	}
+	
+	"#default"
+	{
+		"#supported"
+		{
+			"engine"	"sdk2006"
+		}
+		
+		"Offsets"
+		{
+			// virtual functions
+			"base_combat_weapon_send_weapon_anim"
+			{
+				"linux"		"208"
+			}
+			
+			// offsets
+			"base_client_delta_tick"
+			{
+				"linux"		"0xd4"
+			}
+			
+			"base_player_delay"
+			{
+				"linux"		"0xa44"
+			}
+		}
+		
+		"Addresses"
+		{
+			"game_client_send_sound_jnz"
+			{
+				"signature"	"game_client_send_sound"
+
+				"linux"
+				{
+					"offset"	"0x54"
+				}
+			}
+			
+			"base_player_spawn_stop_replay_mode_call"
+			{
+				"signature"	"base_player_spawn"
+
+				"linux"
+				{
+					"offset"	"0x423"
+				}
+			}
+		}
+		
+		"Keys"
+		{
+			"act_vm_primary_attack"		"178"
 		}
 	}
 }

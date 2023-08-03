@@ -50,9 +50,7 @@ enum struct Offsets {
 	int base_player_delay;
 	int base_player_replay_end;
 	int base_player_replay_entity;
-	int base_client_send_net_msg_this_offset;
-	int game_client_send_sound_jnz;
-	int base_player_spawn_stop_replay_mode_call;
+	int base_client_send_net_msg_this;
 }
 
 Offsets offsets;
@@ -63,7 +61,7 @@ Handle send_weapon_anim;
 Handle net_message_get_group;
 Handle send_net_msg;
 
-// since different engines have their own values, we need this instead of #define
+// since different engines have their own values, we need to setup it at runtime
 int act_vm_primary_attack;
 
 // used only for plugin unload
@@ -98,19 +96,16 @@ UserMsg hud_msg_user_message_id;
 
 public void OnPluginStart() {
 	GameData game_data = LoadGameConfigFile("quickpeek.games");
-	load_offsets(game_data);
+	parse_game_data(game_data);
 
-	// for example, CS:S v34 has 178
-	act_vm_primary_attack = GetEngineVersion() != Engine_SourceSDK2006 ? 180 : 178;
+	Address game_client_send_sound_jnz = game_data.GetAddress("game_client_send_sound_jnz");
+	StoreToAddress(game_client_send_sound_jnz, JL_OPCODE, NumberType_Int8, true);
 
-	int send_sound = view_as<int>(game_data.GetMemSig("game_client_send_sound"));
-	StoreToAddress(view_as<Address>(send_sound + offsets.game_client_send_sound_jnz), JL_OPCODE, NumberType_Int8, true);
-
-	int spawn_player = view_as<int>(game_data.GetMemSig("base_player_spawn"));
+	int base_player_spawn_stop_replay_mode_call = view_as<int>(game_data.GetAddress("base_player_spawn_stop_replay_mode_call"));
 	
 	for (int i = 0; i < 6; ++i) {
-		stop_replay_mode_call[i] = LoadFromAddress(view_as<Address>(spawn_player + offsets.base_player_spawn_stop_replay_mode_call + i), NumberType_Int8);
-		StoreToAddress(view_as<Address>(spawn_player + offsets.base_player_spawn_stop_replay_mode_call + i), NOP_OPCODE, NumberType_Int8, true);
+		stop_replay_mode_call[i] = LoadFromAddress(view_as<Address>(base_player_spawn_stop_replay_mode_call + i), NumberType_Int8);
+		StoreToAddress(view_as<Address>(base_player_spawn_stop_replay_mode_call + i), NOP_OPCODE, NumberType_Int8, true);
 	}
 
 	hint_text_user_message_id = GetUserMessageId("HintText");
@@ -178,13 +173,13 @@ public void OnPluginEnd() {
 
 	GameData game_data = LoadGameConfigFile("quickpeek.games");
 
-	int send_sound = view_as<int>(game_data.GetMemSig("game_client_send_sound"));
-	StoreToAddress(view_as<Address>(send_sound + offsets.game_client_send_sound_jnz), JNZ_OPCODE, NumberType_Int8, true);
+	Address game_client_send_sound_jnz = game_data.GetAddress("game_client_send_sound_jnz");
+	StoreToAddress(game_client_send_sound_jnz, JNZ_OPCODE, NumberType_Int8, true);
 
-	int player_spawn = view_as<int>(game_data.GetMemSig("base_player_spawn"));
+	int base_player_spawn_stop_replay_mode_call = view_as<int>(game_data.GetAddress("base_player_spawn_stop_replay_mode_call"));
 
 	for (int i = 0; i < 6; ++i)
-		StoreToAddress(view_as<Address>(player_spawn + offsets.base_player_spawn_stop_replay_mode_call + i), stop_replay_mode_call[i], NumberType_Int8, true);	
+		StoreToAddress(view_as<Address>(base_player_spawn_stop_replay_mode_call + i), stop_replay_mode_call[i], NumberType_Int8, true);	
 }
 
 public void OnClientPutInServer(int index) {
@@ -280,6 +275,8 @@ public void OnGameFrame() {
 			
 			switch (player_data_queue_action[i]) {
 				case ACTION_START: {
+					player_data_targets_count[i] = 0;
+					
 					new_target = player_data_init_target[i];
 					
 					if (!new_target || !is_valid_target(new_target))
@@ -339,12 +336,13 @@ public void OnGameFrame() {
 							add_target(i, new_target);
 					}
 
+					if (player_data_init_target[i] == target)
+						player_data_init_target[i] = 0;
+
 					if (new_target)
 						remove_target(i, idx);
-					else {
-						player_data_init_target[i] = 0;
+					else
 						new_target = i;
-					}
 				}
 			}
 
@@ -538,8 +536,9 @@ MRESReturn game_client_send_net_msg(int this_pointer, DHookReturn ret, DHookPara
 	if (group == MSG_GROUP_USER_MESSAGES && !is_peek_message) {
 		UserMsg msg_type = view_as<UserMsg>(LoadFromAddress(view_as<Address>(msg + offsets.svc_user_message_msg_type), NumberType_Int32));
 
-		if (msg_type == hint_text_user_message_id || msg_type == key_hint_text_user_message_id || msg_type == hud_msg_user_message_id) {			
-			int index = LoadFromAddress(view_as<Address>(this_pointer - offsets.base_client_send_net_msg_this_offset + offsets.base_client_client_slot), NumberType_Int32) + 1;
+		if (msg_type == hint_text_user_message_id || msg_type == key_hint_text_user_message_id || msg_type == hud_msg_user_message_id) {
+			// windows has some probiems with this pointer			
+			int index = LoadFromAddress(view_as<Address>(this_pointer - offsets.base_client_send_net_msg_this + offsets.base_client_client_slot), NumberType_Int32) + 1;
 
 			for (int i = 1; i <= MaxClients; ++i) {
 				if (!IsClientInGame(i) || !IsPlayerAlive(i))
@@ -547,7 +546,7 @@ MRESReturn game_client_send_net_msg(int this_pointer, DHookReturn ret, DHookPara
 
 				if (peek_target(i) == index) {
 					int client = get_base_client(i);
-					SDKCall(send_net_msg, client + offsets.base_client_send_net_msg_this_offset, msg, params.Get(2));
+					SDKCall(send_net_msg, client + offsets.base_client_send_net_msg_this, msg, params.Get(2));
 				}
 			}
 
@@ -713,8 +712,8 @@ static void fix_peek_weapon_anim(int index) {
 	}
 }
 
-// we assume some variables are near
-static void load_offsets(GameData gd) {
+static void parse_game_data(GameData gd) {
+	// we assume some variables are near
 	offsets.base_client_client_slot = gd.GetOffset("base_client_client_slot");
 	offsets.base_client_entity_index = offsets.base_client_client_slot + 0x4;
 	offsets.base_client_delta_tick = gd.GetOffset("base_client_delta_tick");
@@ -725,8 +724,9 @@ static void load_offsets(GameData gd) {
 	offsets.base_player_replay_end = offsets.base_player_delay + 0x4;
 	offsets.base_player_replay_entity = offsets.base_player_replay_end + 0x4;
 	
-	offsets.base_client_send_net_msg_this_offset = gd.GetOffset("base_client_send_net_msg_this_offset");
+	offsets.base_client_send_net_msg_this = gd.GetOffset("base_client_send_net_msg_this");
 
-	offsets.game_client_send_sound_jnz = gd.GetOffset("game_client_send_sound_jnz");
-	offsets.base_player_spawn_stop_replay_mode_call = gd.GetOffset("base_player_spawn_stop_replay_mode_call");
+	char buf[32];
+	gd.GetKeyValue("act_vm_primary_attack", buf, sizeof(buf));
+	act_vm_primary_attack = StringToInt(buf);
 }
