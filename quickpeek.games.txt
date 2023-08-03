@@ -4,30 +4,30 @@
 	{
 		"Offsets"
 		{
+			// virtual functions
 			"base_server_get_client"
 			{
-				"library"	"engine"
 				"linux"		"7"
 				"windows"	"6"
 			}
 			
+			"i_net_message_get_group"
+			{
+				"linux"		"9"
+				"windows"	"8"
+			}
+			
 			"base_combat_weapon_send_weapon_anim"
 			{
-				"library"	"server"
 				"linux"		"237"
 				"windows"	"237"
 			}
 			
-			"base_player_delay"
+			// offsets
+			"base_client_client_slot"
 			{
-				"linux"		"0xb58"
-				"windows"	"0xb44"
-			}
-			
-			"base_client_entity_index"
-			{
-				"linux"		"0x10"
-				"windows"	"0x10"
+				"linux"		"0xc"
+				"windows"	"0xc"
 			}
 			
 			"base_client_delta_tick"
@@ -36,6 +36,26 @@
 				"windows"	"0xcc"
 			}
 			
+			"svc_user_message_msg_type"
+			{
+				"linux"		"0x10"
+				"windows"	"0x10"
+			}	
+			
+			"base_player_delay"
+			{
+				"linux"		"0xb58"
+				"windows"	"0xb44"
+			}
+
+			"base_client_send_net_msg_this_offset"
+			{
+
+				"linux"		"0x0"
+				"windows"	"0x4"
+			}
+			
+			// opcodes
 			"game_client_send_sound_jnz"
 			{
 				"linux"		"0x34"
@@ -47,11 +67,24 @@
 				"linux"		"0x5be"
 				"windows"	"0x53a"
 			}
-		
 		}
 		
 		"Signatures"
-		{			
+		{
+			"base_client_send_net_msg"
+			{
+				"library"	"engine"
+				"linux"		"@_ZN11CBaseClient10SendNetMsgER11INetMessageb"
+				"windows"	"\x55\x8B\xEC\x51\x53\x8B\xD9\x83\xBB\xC0\x00\x00\x00\x00"
+			}
+			
+			"game_client_send_net_msg"
+			{
+				"library"	"engine"
+				"linux"		"@_ZN11CGameClient10SendNetMsgER11INetMessageb"
+				"windows"	"\x55\x8B\xEC\x80\xB9\x90\x00\x00\x00\x00"
+			}
+				
 			"game_client_send_sound"
 			{
 				"library"	"engine"
@@ -65,6 +98,30 @@
 				"linux"		"@_ZN11CBasePlayer5SpawnEv"
 				"windows"	"\x55\x8B\xEC\x83\xEC\x38\x56\x8B\xF1\x57"
 			}
-		}	
+		}
+		
+		"Functions"
+		{
+			"game_client_send_net_msg"
+			{
+				"signature"	"game_client_send_net_msg"
+				"callconv"	"thiscall"
+				"return"	"bool"
+				"this"		"address"
+				"arguments"
+				{
+					"msg"
+					{	
+						"type"	"int"
+					}
+					
+					"force_reliable"
+					{
+						"type"	"bool"
+					}	
+				}
+			}
+		}
 	}
 }
+
