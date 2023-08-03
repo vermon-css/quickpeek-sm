@@ -20,7 +20,7 @@
 			"base_combat_weapon_send_weapon_anim"
 			{
 				"linux"		"237"
-				"windows"	"237"
+				"windows"	"236"
 			}
 			
 			// offsets
