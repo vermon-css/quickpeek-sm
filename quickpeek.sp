@@ -46,20 +46,22 @@ enum struct Offsets {
 	int base_client_client_slot;
 	int base_client_entity_index;
 	int base_client_delta_tick;
+	int base_client_snapshot_interval;
 	int svc_user_message_msg_type;
 	int base_player_delay;
 	int base_player_replay_end;
 	int base_player_replay_entity;
-	int base_client_send_net_msg_this;
+	int base_client_shift;
 }
 
 Offsets offsets;
 
 // SDKCall handles
 Handle get_client;
-Handle send_weapon_anim;
-Handle net_message_get_group;
+Handle get_user_setting;
 Handle send_net_msg;
+Handle net_message_get_group;
+Handle send_weapon_anim;
 
 // since different engines have their own values, we need to setup it at runtime
 int act_vm_primary_attack;
@@ -68,6 +70,8 @@ int act_vm_primary_attack;
 char stop_replay_mode_call[6];
 
 ConVar sv_stressbots;
+ConVar sv_client_min_interp_ratio;
+ConVar sv_client_max_interp_ratio;
 
 Handle sync_hud;
 
@@ -80,6 +84,9 @@ int player_data_init_target[MAXPLAYERS + 1];
 int player_data_old_buttons[MAXPLAYERS + 1];
 int player_data_queue_action[MAXPLAYERS + 1];
 float player_data_hud_update_time[MAXPLAYERS + 1];
+bool player_data_changed_interp_ratio[MAXPLAYERS + 1];
+
+int player_data_interp_ratio[MAXPLAYERS + 1];
 bool player_data_block_angles[MAXPLAYERS + 1];
 
 char player_data_hint_text[MAXPLAYERS + 1][MAX_USER_MSG_DATA];
@@ -122,16 +129,11 @@ public void OnPluginStart() {
 	PrepSDKCall_SetReturnInfo(SDKType_PlainOldData, SDKPass_ByValue);
 	get_client = EndPrepSDKCall();
 
-	StartPrepSDKCall(SDKCall_Entity);
-	PrepSDKCall_SetFromConf(game_data, SDKConf_Virtual, "base_combat_weapon_send_weapon_anim");
-	PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_ByValue);
-	PrepSDKCall_SetReturnInfo(SDKType_Bool, SDKPass_ByValue);
-	send_weapon_anim = EndPrepSDKCall();
-
 	StartPrepSDKCall(SDKCall_Raw);
-	PrepSDKCall_SetFromConf(game_data, SDKConf_Virtual, "i_net_message_get_group");
-	PrepSDKCall_SetReturnInfo(SDKType_PlainOldData, SDKPass_ByValue);
-	net_message_get_group = EndPrepSDKCall();
+	PrepSDKCall_SetFromConf(game_data, SDKConf_Virtual, "base_client_get_user_setting");
+	PrepSDKCall_AddParameter(SDKType_String, SDKPass_Pointer);
+	PrepSDKCall_SetReturnInfo(SDKType_String, SDKPass_Pointer);
+	get_user_setting = EndPrepSDKCall();
 
 	StartPrepSDKCall(SDKCall_Raw);
 	PrepSDKCall_SetFromConf(game_data, SDKConf_Signature, "base_client_send_net_msg");
@@ -140,18 +142,32 @@ public void OnPluginStart() {
 	PrepSDKCall_SetReturnInfo(SDKType_Bool, SDKPass_ByValue);
 	send_net_msg = EndPrepSDKCall();
 
+	StartPrepSDKCall(SDKCall_Raw);
+	PrepSDKCall_SetFromConf(game_data, SDKConf_Virtual, "i_net_message_get_group");
+	PrepSDKCall_SetReturnInfo(SDKType_PlainOldData, SDKPass_ByValue);
+	net_message_get_group = EndPrepSDKCall();
+
+	StartPrepSDKCall(SDKCall_Entity);
+	PrepSDKCall_SetFromConf(game_data, SDKConf_Virtual, "base_combat_weapon_send_weapon_anim");
+	PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_ByValue);
+	PrepSDKCall_SetReturnInfo(SDKType_Bool, SDKPass_ByValue);
+	send_weapon_anim = EndPrepSDKCall();
+
 	DHookSetup setup = DHookCreateFromConf(game_data, "game_client_send_net_msg");
 	DHookEnableDetour(setup, false, game_client_send_net_msg);
 	
 	ConVar sv_maxreplay = FindConVar("sv_maxreplay");
 	sv_maxreplay.FloatValue = 1.0;
 
-	sync_hud = CreateHudSynchronizer();
+	sv_client_min_interp_ratio = FindConVar("sv_client_min_interp_ratio");
+	sv_client_max_interp_ratio = FindConVar("sv_client_max_interp_ratio");
 
 	// enable peeking on fakeplayers
 	sv_stressbots = FindConVar("sv_stressbots");
 	sv_stressbots.Flags = 0;
 	sv_stressbots.BoolValue = true;
+
+	sync_hud = CreateHudSynchronizer();
 
 	RegConsoleCmd("qpeek", quickpeek_console_command);
 
@@ -159,6 +175,7 @@ public void OnPluginStart() {
 	AddCommandListener(unhold_quickpeek_command_listener, "-qpeek")
 
 	RegClientCookie("quickpeek_block_angles", "Block turning while peeking", CookieAccess_Protected);
+	RegClientCookie("quickpeek_interp_ratio", "Minimum interp ratio while peeking", CookieAccess_Protected);
 
 	if (IsServerProcessing())
 		for (int i = 1; i <= MaxClients; ++i)
@@ -195,20 +212,30 @@ public void OnClientPutInServer(int index) {
 	for (int i = 0; i < HUD_MSG_MAX_CHANNELS; ++i)
 		player_data_hud_msg_end_time[index][i] = 0.0;
 
-	if (!AreClientCookiesCached(index))
+	if (!AreClientCookiesCached(index)) {
+		player_data_interp_ratio[index] = 2;
 		player_data_block_angles[index] = true;
+	}
 }
 
 public void OnClientCookiesCached(int index) {
+	char buf[16];
+	
 	Cookie cookie = FindClientCookie("quickpeek_block_angles");
-
-	char buf[4];
 	GetClientCookie(index, cookie, buf, sizeof(buf));
 
 	if (strlen(buf) == 0)
 		IntToString(1, buf, sizeof(buf));
 
 	player_data_block_angles[index] = view_as<bool>(StringToInt(buf));
+
+	cookie = FindClientCookie("quickpeek_interp_ratio");
+	GetClientCookie(index, cookie, buf, sizeof(buf));
+
+	if (strlen(buf) == 0)
+		IntToString(2, buf, sizeof(buf));
+
+	player_data_interp_ratio[index] = StringToInt(buf);
 }
 
 public void OnClientDisconnect(int index) {
@@ -348,8 +375,12 @@ public void OnGameFrame() {
 
 			// init
 			if (new_target) {
-				if (new_target == i)
+				player_data_hud_update_time[i] = 0.0;
+				
+				if (new_target == i) {
 					stop_peeking(i);
+					ClearSyncHud(i, sync_hud);
+				}
 				else if (!target)
 					start_peeking(i, new_target);
 				else
@@ -416,6 +447,7 @@ public void OnGameFrame() {
 Action quickpeek_console_command(int index, int args) {
 	if (args > 0) {
 		char buf[16];
+		
 		GetCmdArg(1, buf, sizeof(buf));
 
 		if (strcmp(buf, "angles", false) == 0) {
@@ -423,6 +455,21 @@ Action quickpeek_console_command(int index, int args) {
 
 			Cookie cookie = FindClientCookie("quickpeek_block_angles");
 			cookie.Set(index, player_data_block_angles[index] ? "1" : "0");
+
+			return Plugin_Handled;
+		}
+
+		if (strcmp(buf, "interp", false) == 0) {
+			if (args <= 1)
+				return Plugin_Handled;
+
+			GetCmdArg(2, buf, sizeof(buf));
+			
+			if (!StringToIntEx(buf, player_data_interp_ratio[index]))
+				return Plugin_Handled;
+
+			Cookie cookie = FindClientCookie("quickpeek_interp_ratio");
+			cookie.Set(index, buf);
 
 			return Plugin_Handled;
 		}
@@ -529,6 +576,7 @@ Action hud_msg_hook(UserMsg msg_id, BfRead msg, const int[] players, int players
 	return Plugin_Continue;
 }
 
+// ig we can avoid the hook using s_MsgData in usual usermessages hooks
 MRESReturn game_client_send_net_msg(int this_pointer, DHookReturn ret, DHookParam params) {
 	int msg = params.Get(1);
 	int group = SDKCall(net_message_get_group, msg);
@@ -538,7 +586,7 @@ MRESReturn game_client_send_net_msg(int this_pointer, DHookReturn ret, DHookPara
 
 		if (msg_type == hint_text_user_message_id || msg_type == key_hint_text_user_message_id || msg_type == hud_msg_user_message_id) {
 			// windows has some probiems with this pointer			
-			int index = LoadFromAddress(view_as<Address>(this_pointer - offsets.base_client_send_net_msg_this + offsets.base_client_client_slot), NumberType_Int32) + 1;
+			int index = LoadFromAddress(view_as<Address>(this_pointer - offsets.base_client_shift + offsets.base_client_client_slot), NumberType_Int32) + 1;
 
 			for (int i = 1; i <= MaxClients; ++i) {
 				if (!IsClientInGame(i) || !IsPlayerAlive(i))
@@ -546,7 +594,7 @@ MRESReturn game_client_send_net_msg(int this_pointer, DHookReturn ret, DHookPara
 
 				if (peek_target(i) == index) {
 					int client = get_base_client(i);
-					SDKCall(send_net_msg, client + offsets.base_client_send_net_msg_this, msg, params.Get(2));
+					SDKCall(send_net_msg, client + offsets.base_client_shift, msg, params.Get(2));
 				}
 			}
 
@@ -593,8 +641,30 @@ static void start_peeking(int index, int target) {
 
 	kill_cam_message(index, 4, target, index);
 	fix_peek_weapon_anim(target);
+
+	int client = get_base_client(index);
+
+	player_data_changed_interp_ratio[index] = false;
 	
-	player_data_hud_update_time[index] = 0.0;
+	float snapshot_interval = LoadFromAddress(view_as<Address>(client + offsets.base_client_snapshot_interval), NumberType_Int32);
+	float desired_interp = player_data_interp_ratio[index] * snapshot_interval;
+
+	float update_rate = get_client_update_rate(client);
+	float interp = get_client_interp_amount(client, update_rate);
+
+	// we already have ok interp
+	if (desired_interp <= interp)
+		return;
+	
+	float interp_ratio = desired_interp * update_rate;
+
+	char buf[16];
+	FloatToString(interp_ratio, buf, sizeof(buf));
+	
+	sv_client_min_interp_ratio.ReplicateToClient(index, buf);
+	sv_client_max_interp_ratio.ReplicateToClient(index, buf);
+
+	player_data_changed_interp_ratio[index] = true;
 }
 
 static void stop_peeking(int index) {
@@ -603,7 +673,16 @@ static void stop_peeking(int index) {
 	SetEntData(index, offsets.base_player_replay_entity, 0, 4, false);
 
 	kill_cam_message(index, 0, 0, 0);
-	ClearSyncHud(index, sync_hud);
+
+	if (player_data_changed_interp_ratio[index]) {
+		char buf[16];
+		
+		sv_client_min_interp_ratio.GetString(buf, sizeof(buf));
+		sv_client_min_interp_ratio.ReplicateToClient(index, buf);
+		
+		sv_client_max_interp_ratio.GetString(buf, sizeof(buf));
+		sv_client_max_interp_ratio.ReplicateToClient(index, buf);
+	}
 }
 
 static void switch_peek_target(int index, int target) {
@@ -616,8 +695,6 @@ static void switch_peek_target(int index, int target) {
 
 	StoreToAddress(view_as<Address>(client + offsets.base_client_delta_tick), -1, NumberType_Int32, false);
 	StoreToAddress(view_as<Address>(client + offsets.base_client_entity_index), target, NumberType_Int32, false);
-
-	player_data_hud_update_time[index] = 0.0;
 }
 
 static void add_target(int index, int target, bool back=true) {
@@ -712,11 +789,42 @@ static void fix_peek_weapon_anim(int index) {
 	}
 }
 
+static float get_client_update_rate(int client) {
+	char buf[16];
+	SDKCall(get_user_setting, client + offsets.base_client_shift, buf, sizeof(buf), "cl_updaterate");
+	return StringToFloat(buf);
+}
+
+static float get_client_interp_amount(int client, float update_rate) {
+	char buf[16];
+
+	SDKCall(get_user_setting, client + offsets.base_client_shift, buf, sizeof(buf), "cl_interp");
+	float interp = StringToFloat(buf);
+
+	// doing ratio interpolation, client looks at unbounded cl_updaterate. it can lead to client-server interp mismatch (bug?)
+	SDKCall(get_user_setting, client + offsets.base_client_shift, buf, sizeof(buf), "cl_interp_ratio");
+	float interp_ratio = StringToFloat(buf);
+
+	float min = sv_client_min_interp_ratio.FloatValue;
+	float max = sv_client_max_interp_ratio.FloatValue;
+
+	if (min != -1.0)
+		if (interp_ratio < min)
+			interp_ratio = min;
+		else if (interp_ratio > max)
+			interp_ratio = max;
+
+	float ratio_interp = interp_ratio / update_rate;
+	
+	return (interp > ratio_interp) ? interp : ratio_interp;
+}
+
 static void parse_game_data(GameData gd) {
 	// we assume some variables are near
 	offsets.base_client_client_slot = gd.GetOffset("base_client_client_slot");
 	offsets.base_client_entity_index = offsets.base_client_client_slot + 0x4;
 	offsets.base_client_delta_tick = gd.GetOffset("base_client_delta_tick");
+	offsets.base_client_snapshot_interval = gd.GetOffset("base_client_snapshot_interval");
 
 	offsets.svc_user_message_msg_type = gd.GetOffset("svc_user_message_msg_type");
 	
@@ -724,7 +832,7 @@ static void parse_game_data(GameData gd) {
 	offsets.base_player_replay_end = offsets.base_player_delay + 0x4;
 	offsets.base_player_replay_entity = offsets.base_player_replay_end + 0x4;
 	
-	offsets.base_client_send_net_msg_this = gd.GetOffset("base_client_send_net_msg_this");
+	offsets.base_client_shift = gd.GetOffset("base_client_shift");
 
 	char buf[32];
 	gd.GetKeyValue("act_vm_primary_attack", buf, sizeof(buf));
