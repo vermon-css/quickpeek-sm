@@ -11,12 +11,6 @@
 				"windows"	"6"
 			}
 			
-			"base_client_get_user_setting"
-			{
-				"linux"		"9"
-				"windows"	"20"
-			}
-			
 			"i_net_message_get_group"
 			{
 				"linux"		"9"

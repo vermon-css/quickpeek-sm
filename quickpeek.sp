@@ -58,7 +58,6 @@ Offsets offsets;
 
 // SDKCall handles
 Handle get_client;
-Handle get_user_setting;
 Handle send_net_msg;
 Handle net_message_get_group;
 Handle send_weapon_anim;
@@ -128,12 +127,6 @@ public void OnPluginStart() {
 	PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_ByValue);
 	PrepSDKCall_SetReturnInfo(SDKType_PlainOldData, SDKPass_ByValue);
 	get_client = EndPrepSDKCall();
-
-	StartPrepSDKCall(SDKCall_Raw);
-	PrepSDKCall_SetFromConf(game_data, SDKConf_Virtual, "base_client_get_user_setting");
-	PrepSDKCall_AddParameter(SDKType_String, SDKPass_Pointer);
-	PrepSDKCall_SetReturnInfo(SDKType_String, SDKPass_Pointer);
-	get_user_setting = EndPrepSDKCall();
 
 	StartPrepSDKCall(SDKCall_Raw);
 	PrepSDKCall_SetFromConf(game_data, SDKConf_Signature, "base_client_send_net_msg");
@@ -649,8 +642,8 @@ static void start_peeking(int index, int target) {
 	float snapshot_interval = LoadFromAddress(view_as<Address>(client + offsets.base_client_snapshot_interval), NumberType_Int32);
 	float desired_interp = player_data_interp_ratio[index] * snapshot_interval;
 
-	float update_rate = get_client_update_rate(client);
-	float interp = get_client_interp_amount(client, update_rate);
+	float update_rate = get_client_update_rate(index);
+	float interp = get_client_interp_amount(index, update_rate);
 
 	// we already have ok interp
 	if (desired_interp <= interp)
@@ -789,20 +782,20 @@ static void fix_peek_weapon_anim(int index) {
 	}
 }
 
-static float get_client_update_rate(int client) {
+static float get_client_update_rate(int index) {
 	char buf[16];
-	SDKCall(get_user_setting, client + offsets.base_client_shift, buf, sizeof(buf), "cl_updaterate");
+	GetClientInfo(index, "cl_updaterate", buf, sizeof(buf));
 	return StringToFloat(buf);
 }
 
-static float get_client_interp_amount(int client, float update_rate) {
+static float get_client_interp_amount(int index, float update_rate) {
 	char buf[16];
 
-	SDKCall(get_user_setting, client + offsets.base_client_shift, buf, sizeof(buf), "cl_interp");
+	GetClientInfo(index, "cl_interp", buf, sizeof(buf));
 	float interp = StringToFloat(buf);
 
 	// doing ratio interpolation, client looks at unbounded cl_updaterate. it can lead to client-server interp mismatch (bug?)
-	SDKCall(get_user_setting, client + offsets.base_client_shift, buf, sizeof(buf), "cl_interp_ratio");
+	GetClientInfo(index, "cl_interp_ratio", buf, sizeof(buf));
 	float interp_ratio = StringToFloat(buf);
 
 	float min = sv_client_min_interp_ratio.FloatValue;
