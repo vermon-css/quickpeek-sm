@@ -25,6 +25,7 @@ enum {
 	ACTION_NONE,
 	ACTION_START,
 	ACTION_STOP,
+	ACTION_INIT,
 	ACTION_NEXT_TARGET,
 	ACTION_PREV_TARGET,
 	ACTION_NEXT_TARGET_OR_STOP
@@ -83,7 +84,8 @@ int player_data_init_target[MAXPLAYERS + 1];
 int player_data_old_buttons[MAXPLAYERS + 1];
 int player_data_queue_action[MAXPLAYERS + 1];
 float player_data_hud_update_time[MAXPLAYERS + 1];
-bool player_data_changed_interp_ratio[MAXPLAYERS + 1];
+bool player_data_is_changed_interp_ratio[MAXPLAYERS + 1];
+bool player_data_is_sticky[MAXPLAYERS + 1];
 
 int player_data_interp_ratio[MAXPLAYERS + 1];
 bool player_data_block_angles[MAXPLAYERS + 1];
@@ -195,9 +197,10 @@ public void OnPluginEnd() {
 public void OnClientPutInServer(int index) {
 	player_data_targets_count[index] = 0;
 	player_data_init_target[index] = 0;
-	player_data_hud_update_time[index] = 0.0;
+	player_data_hud_update_time[index] = -1.0;
 	player_data_old_buttons[index] = 0;
 	player_data_queue_action[index] = ACTION_NONE;
+	player_data_is_sticky[index] = false;
 
 	player_data_hint_text_end_time[index] = 0.0;
 	player_data_key_hint_text_end_time[index] = 0.0;
@@ -242,11 +245,31 @@ public Action OnPlayerRunCmd(int index, int& buttons, int& impulse, float vel[3]
 	if (!IsPlayerAlive(index) || !peek_target(index))
 		return Plugin_Continue;
 
-	if (player_data_queue_action[index] != ACTION_STOP && player_data_queue_action[index] != ACTION_NEXT_TARGET_OR_STOP)
+	if (player_data_queue_action[index] == ACTION_NONE) {
 		if (buttons & IN_ATTACK && (player_data_old_buttons[index] & IN_ATTACK == 0))
 			player_data_queue_action[index] = ACTION_NEXT_TARGET;
 		else if (buttons & IN_ATTACK2 && (player_data_old_buttons[index] & IN_ATTACK2 == 0))
 			player_data_queue_action[index] = ACTION_PREV_TARGET;
+		else if (buttons & IN_JUMP && (player_data_old_buttons[index] & IN_JUMP == 0)) {
+			if (player_data_init_target[index] && player_data_init_target[index] != peek_target(index) && is_valid_target(player_data_init_target[index])) {
+				// forbid the jump
+				int old_buttons = GetEntProp(index, Prop_Data, "m_nOldButtons");
+				SetEntProp(index, Prop_Data, "m_nOldButtons", old_buttons | IN_JUMP);
+
+				player_data_queue_action[index] = ACTION_INIT;
+			}
+		}
+		else if (buttons & IN_USE && (player_data_old_buttons[index] & IN_USE == 0)) {
+			if (player_data_is_sticky[index] && (peek_target(index) == player_data_init_target[index]))
+				player_data_is_sticky[index] = false;
+			else {
+				player_data_init_target[index] = peek_target(index);
+				player_data_is_sticky[index] = true;
+			}
+
+			player_data_hud_update_time[index] = 0.0;
+		}
+	}
 
 	player_data_old_buttons[index] = buttons;
 	
@@ -264,9 +287,15 @@ public Action OnPlayerRunCmd(int index, int& buttons, int& impulse, float vel[3]
 }
 
 public void OnGameFrame() {
+	// we set it here
+	is_peek_message = true;
+	
 	for (int i = 1; i <= MaxClients; ++i) {
 		if (!IsClientInGame(i))
 			continue;
+
+		if (player_data_init_target[i] && !IsClientInGame(player_data_init_target[i]))
+			player_data_init_target[i] = 0;
 
 		int target = peek_target(i);
 		
@@ -286,35 +315,30 @@ public void OnGameFrame() {
 		int client = get_base_client(i);
 		int delta_tick = LoadFromAddress(view_as<Address>(client + offsets.base_client_delta_tick), NumberType_Int32);
 
-		// we set it here
-		is_peek_message = true;
-
 		// check whether client is fully updated or not to prevent host error (missing client entity)
-		if (delta_tick != -1) {
+		if (delta_tick != -1 && player_data_queue_action[i] != ACTION_NONE) {
 			int new_target = 0;
-			
+
+			// find a new target
 			switch (player_data_queue_action[i]) {
 				case ACTION_START: {
-					player_data_targets_count[i] = 0;
-					
 					new_target = player_data_init_target[i];
 					
 					if (!new_target || !is_valid_target(new_target))
 						new_target = find_new_target(i);
-						
-					if (new_target) {
-						// init array
-						player_data_targets[i][0] = new_target;
-						player_data_targets_count[i] = 1;
-						player_data_init_target[i] = new_target;
-					}
+					
+					player_data_targets[i][0] = new_target;
+					player_data_targets_count[i] = 1;
 				}
 
-				case ACTION_STOP: {
-					player_data_init_target[i] = target;
-					new_target = i;
-				}
+				case ACTION_STOP:
+					new_target = 0;
 
+				case ACTION_INIT: {
+					int init_target = player_data_init_target[i];
+					new_target = (init_target && is_valid_target(init_target)) ? init_target : target;
+				}
+		
 				case ACTION_NEXT_TARGET: {
 					// last element: try to find another nearest target
 					if (player_data_targets[i][player_data_targets_count[i] - 1] == target) {
@@ -328,6 +352,8 @@ public void OnGameFrame() {
 						int idx = get_used_target_index(i, target);
 						new_target = cycle_used_targets(i, idx);
 					}
+
+					new_target = new_target ? new_target : target;
 				}
 
 				case ACTION_PREV_TARGET: {
@@ -343,6 +369,8 @@ public void OnGameFrame() {
 						int idx = get_used_target_index(i, target);
 						new_target = cycle_used_targets(i, idx, true);
 					}
+
+					new_target = new_target ? new_target : target;
 				}
 
 				case ACTION_NEXT_TARGET_OR_STOP: {
@@ -356,30 +384,30 @@ public void OnGameFrame() {
 							add_target(i, new_target);
 					}
 
-					if (player_data_init_target[i] == target)
-						player_data_init_target[i] = 0;
-
 					if (new_target)
 						remove_target(i, idx);
-					else
-						new_target = i;
 				}
 			}
 
-			// init
-			if (new_target) {
+			// process
+			if (target != new_target) {
 				player_data_hud_update_time[i] = 0.0;
-				
-				if (new_target == i) {
-					stop_peeking(i);
-					ClearSyncHud(i, sync_hud);
-				}
-				else if (!target)
+
+				if (!target)
 					start_peeking(i, new_target);
+				else if (!new_target) {
+					if (!player_data_is_sticky[i])
+						player_data_init_target[i] = target;
+						
+					stop_peeking(i);
+				}
 				else
 					switch_peek_target(i, new_target);
-	
+
 				float cur_time = GetGameTime();
+
+				target = target ? target : i;
+				new_target = new_target ? new_target : i;
 				
 				if (cur_time < player_data_hint_text_end_time[new_target])
 					PrintHintText(i, player_data_hint_text[new_target]);
@@ -390,8 +418,6 @@ public void OnGameFrame() {
 					key_hint_text_message(i, player_data_key_hint_text[new_target])
 				else
 					key_hint_text_message(i, "");
-
-				int prev_target = target ? target : i;
 
 				for (int n = 0; n < HUD_MSG_MAX_CHANNELS; ++n) {
 					float diff_time = player_data_hud_msg_end_time[new_target][n] - GetGameTime();
@@ -412,7 +438,7 @@ public void OnGameFrame() {
 						SetHudTextParamsEx(params.x, params.y, diff_time, params.color1, params.color2, params.effect, 0.0, 0.0, 0.0);
 						ShowHudText(i, n, player_data_hud_msg_text[new_target][n]);
 					}
-					else if (cur_time < player_data_hud_msg_end_time[prev_target][n])
+					else if (cur_time < player_data_hud_msg_end_time[target][n])
 						ShowHudText(i, n, "");
 				}
 			}
@@ -427,14 +453,21 @@ public void OnGameFrame() {
 			char buf[MAX_NAME_LENGTH];
 			GetClientName(target, buf, sizeof(buf));
 
-			SetHudTextParams(-1.0, 0.65, 0.3, 255, 255, 255, 0, 0, 0.0, 0.0, 0.0);
+			static const int default_color[] = {255, 255, 255};
+			static const int sticky_color[] = {255, 0, 0};
+
+			if (player_data_is_sticky[i] && target == player_data_init_target[i])
+				SetHudTextParams(-1.0, 0.65, 0.3, sticky_color[0], sticky_color[1], sticky_color[2], 0, 0, 0.0, 0.0, 0.0);
+			else
+				SetHudTextParams(-1.0, 0.65, 0.3, default_color[0], default_color[1], default_color[2], 0, 0, 0.0, 0.0, 0.0);
+
 			ShowSyncHudText(i, sync_hud, buf);
 
 			player_data_hud_update_time[i] = GetGameTime() + 0.25;
 		}
-
-		is_peek_message = false;
 	}
+
+	is_peek_message = false;
 }
 
 Action quickpeek_console_command(int index, int args) {
@@ -472,18 +505,19 @@ Action quickpeek_console_command(int index, int args) {
 	
 	if (!IsPlayerAlive(index))
 		return Plugin_Handled;
-
+	
 	player_data_queue_action[index] = peek_target(index) ? ACTION_STOP : ACTION_START;
+	player_data_targets_count[index] = 0;
 	
 	return Plugin_Handled;
 }
 
 Action hold_quickpeek_command_listener(int index, const char[] command, int args) {
-	if (!IsPlayerAlive(index))
+	if (!IsPlayerAlive(index) || peek_target(index))
 		return Plugin_Handled;
 
-	if (!peek_target(index))
-		player_data_queue_action[index] = ACTION_START;
+	player_data_queue_action[index] = ACTION_START;
+	player_data_targets_count[index] = 0;
 
 	return Plugin_Handled;
 }
@@ -637,7 +671,7 @@ static void start_peeking(int index, int target) {
 
 	int client = get_base_client(index);
 
-	player_data_changed_interp_ratio[index] = false;
+	player_data_is_changed_interp_ratio[index] = false;
 	
 	float snapshot_interval = LoadFromAddress(view_as<Address>(client + offsets.base_client_snapshot_interval), NumberType_Int32);
 	float desired_interp = player_data_interp_ratio[index] * snapshot_interval;
@@ -657,7 +691,7 @@ static void start_peeking(int index, int target) {
 	sv_client_min_interp_ratio.ReplicateToClient(index, buf);
 	sv_client_max_interp_ratio.ReplicateToClient(index, buf);
 
-	player_data_changed_interp_ratio[index] = true;
+	player_data_is_changed_interp_ratio[index] = true;
 }
 
 static void stop_peeking(int index) {
@@ -667,7 +701,7 @@ static void stop_peeking(int index) {
 
 	kill_cam_message(index, 0, 0, 0);
 
-	if (player_data_changed_interp_ratio[index]) {
+	if (player_data_is_changed_interp_ratio[index]) {
 		char buf[16];
 		
 		sv_client_min_interp_ratio.GetString(buf, sizeof(buf));
