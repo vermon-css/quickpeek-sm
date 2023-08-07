@@ -713,6 +713,7 @@ static void start_peeking(int index, int target) {
 			player_data_is_changed_interp_ratio[index] = true;
 		}
 	}
+	// Steam: doing ratio interpolation, client looks at unbounded cl_updaterate. it can lead to client-server interp mismatch (bug?)
 	else {
 		float interp = get_client_interp(index);
 		float update_rate = get_client_update_rate(index);
