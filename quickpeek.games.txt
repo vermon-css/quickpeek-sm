@@ -175,6 +175,11 @@
 			{
 				"linux"		"0xd4"
 			}
+
+			"base_client_snapshot_interval"
+			{
+				"linux"		"0x1fc"
+			}
 			
 			"base_player_delay"
 			{

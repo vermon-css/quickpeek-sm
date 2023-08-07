@@ -70,6 +70,7 @@ int act_vm_primary_attack;
 char stop_replay_mode_call[6];
 
 ConVar sv_stressbots;
+ConVar sv_client_interpolate;
 ConVar sv_client_min_interp_ratio;
 ConVar sv_client_max_interp_ratio;
 
@@ -87,7 +88,7 @@ float player_data_hud_update_time[MAXPLAYERS + 1];
 bool player_data_is_changed_interp_ratio[MAXPLAYERS + 1];
 bool player_data_is_sticky[MAXPLAYERS + 1];
 
-int player_data_interp_ratio[MAXPLAYERS + 1];
+float player_data_interp_ratio[MAXPLAYERS + 1];
 bool player_data_block_angles[MAXPLAYERS + 1];
 
 char player_data_hint_text[MAXPLAYERS + 1][MAX_USER_MSG_DATA];
@@ -154,6 +155,7 @@ public void OnPluginStart() {
 	ConVar sv_maxreplay = FindConVar("sv_maxreplay");
 	sv_maxreplay.FloatValue = 1.0;
 
+	sv_client_interpolate = FindConVar("sv_client_interpolate");
 	sv_client_min_interp_ratio = FindConVar("sv_client_min_interp_ratio");
 	sv_client_max_interp_ratio = FindConVar("sv_client_max_interp_ratio");
 
@@ -209,7 +211,7 @@ public void OnClientPutInServer(int index) {
 		player_data_hud_msg_end_time[index][i] = 0.0;
 
 	if (!AreClientCookiesCached(index)) {
-		player_data_interp_ratio[index] = 2;
+		player_data_interp_ratio[index] = 2.0;
 		player_data_block_angles[index] = true;
 	}
 }
@@ -229,9 +231,9 @@ public void OnClientCookiesCached(int index) {
 	GetClientCookie(index, cookie, buf, sizeof(buf));
 
 	if (strlen(buf) == 0)
-		IntToString(2, buf, sizeof(buf));
+		FloatToString(2.0, buf, sizeof(buf));
 
-	player_data_interp_ratio[index] = StringToInt(buf);
+	player_data_interp_ratio[index] = StringToFloat(buf);
 }
 
 public void OnClientDisconnect(int index) {
@@ -491,7 +493,7 @@ Action quickpeek_console_command(int index, int args) {
 
 			GetCmdArg(2, buf, sizeof(buf));
 			
-			if (!StringToIntEx(buf, player_data_interp_ratio[index]))
+			if (!StringToFloatEx(buf, player_data_interp_ratio[index]))
 				return Plugin_Handled;
 
 			Cookie cookie = FindClientCookie("quickpeek_interp_ratio");
@@ -672,26 +674,48 @@ static void start_peeking(int index, int target) {
 	int client = get_base_client(index);
 
 	player_data_is_changed_interp_ratio[index] = false;
-	
-	float snapshot_interval = LoadFromAddress(view_as<Address>(client + offsets.base_client_snapshot_interval), NumberType_Int32);
-	float desired_interp = player_data_interp_ratio[index] * snapshot_interval;
-
-	float update_rate = get_client_update_rate(index);
-	float interp = get_client_interp_amount(index, update_rate);
-
-	// we already have ok interp
-	if (desired_interp <= interp)
-		return;
-	
-	float interp_ratio = desired_interp * update_rate;
 
 	char buf[16];
-	FloatToString(interp_ratio, buf, sizeof(buf));
-	
-	sv_client_min_interp_ratio.ReplicateToClient(index, buf);
-	sv_client_max_interp_ratio.ReplicateToClient(index, buf);
 
-	player_data_is_changed_interp_ratio[index] = true;
+	float interp_ratio = get_client_interp_ratio(index);
+	float snapshot_interval = LoadFromAddress(view_as<Address>(client + offsets.base_client_snapshot_interval), NumberType_Int32);
+
+	// ClientMod (v34)
+	if (sv_client_interpolate) {
+		GetClientInfo(index, "cl_interpolate", buf, sizeof(buf));
+
+		bool interpolate = view_as<bool>(StringToInt(buf));
+
+		if (sv_client_interpolate.IntValue == 0 || (sv_client_interpolate.IntValue == -1 && !interpolate) || player_data_interp_ratio[index] > interp_ratio) {
+			sv_client_interpolate.ReplicateToClient(index, "1");
+			
+			FloatToString(player_data_interp_ratio[index], buf, sizeof(buf));
+
+			sv_client_min_interp_ratio.ReplicateToClient(index, buf);
+			sv_client_max_interp_ratio.ReplicateToClient(index, buf);
+
+			player_data_is_changed_interp_ratio[index] = true;
+		}
+	}
+	else {
+		float interp = get_client_interp(index);
+		float update_rate = get_client_update_rate(index);
+
+		float ratio_interp = interp_ratio / update_rate;
+		interp = (interp > ratio_interp) ? interp : ratio_interp;
+
+		float desired_interp = player_data_interp_ratio[index] * snapshot_interval;
+
+		if (desired_interp > interp) {
+			FloatToString(desired_interp * update_rate, buf, sizeof(buf));
+
+			sv_client_min_interp_ratio.ReplicateToClient(index, buf);
+			sv_client_max_interp_ratio.ReplicateToClient(index, buf);
+			
+			player_data_is_changed_interp_ratio[index] = true;
+		}
+		
+	}
 }
 
 static void stop_peeking(int index) {
@@ -709,6 +733,11 @@ static void stop_peeking(int index) {
 		
 		sv_client_max_interp_ratio.GetString(buf, sizeof(buf));
 		sv_client_max_interp_ratio.ReplicateToClient(index, buf);
+
+		if (sv_client_interpolate) {
+			sv_client_interpolate.GetString(buf, sizeof(buf));
+			sv_client_interpolate.ReplicateToClient(index, buf);
+		}
 	}
 }
 
@@ -822,28 +851,29 @@ static float get_client_update_rate(int index) {
 	return StringToFloat(buf);
 }
 
-static float get_client_interp_amount(int index, float update_rate) {
+static float get_client_interp(int index) {
+	char buf[16];
+	GetClientInfo(index, "cl_interp", buf, sizeof(buf));
+	return StringToFloat(buf);
+}
+
+static float get_client_interp_ratio(int index) {
 	char buf[16];
 
-	GetClientInfo(index, "cl_interp", buf, sizeof(buf));
-	float interp = StringToFloat(buf);
-
-	// doing ratio interpolation, client looks at unbounded cl_updaterate. it can lead to client-server interp mismatch (bug?)
 	GetClientInfo(index, "cl_interp_ratio", buf, sizeof(buf));
 	float interp_ratio = StringToFloat(buf);
 
 	float min = sv_client_min_interp_ratio.FloatValue;
 	float max = sv_client_max_interp_ratio.FloatValue;
 
-	if (min != -1.0)
+	if (min != -1.0) {
 		if (interp_ratio < min)
 			interp_ratio = min;
 		else if (interp_ratio > max)
 			interp_ratio = max;
+	}
 
-	float ratio_interp = interp_ratio / update_rate;
-	
-	return (interp > ratio_interp) ? interp : ratio_interp;
+	return interp_ratio;
 }
 
 static void parse_game_data(GameData gd) {
