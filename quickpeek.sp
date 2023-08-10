@@ -7,6 +7,7 @@
 #define NOP_OPCODE 0x90
 
 #define EF_NODRAW 32
+#define CLIENTMOD_KEY_HINT_TEXT_ID 34
 #define MSG_GROUP_USER_MESSAGES 6
 #define MAX_USER_MSG_DATA 255
 #define HUD_MSG_MAX_CHANNELS 6
@@ -120,6 +121,10 @@ public void OnPluginStart() {
 	hint_text_user_message_id = GetUserMessageId("HintText");
 	key_hint_text_user_message_id = GetUserMessageId("KeyHintText");
 	hud_msg_user_message_id = GetUserMessageId("HudMsg");
+
+	// ClientMod https://github.com/Reg1oxeN/ClientMod-Api/blob/0fb23fc94984d0dc89cbc6b7ec186d7e10074a95/scripting/include/clientmod/usermessage.inc#L1
+	if (key_hint_text_user_message_id == INVALID_MESSAGE_ID)
+		key_hint_text_user_message_id = view_as<UserMsg>(CLIENTMOD_KEY_HINT_TEXT_ID);
 
 	HookUserMessage(hint_text_user_message_id, hint_text_hook, false);
 	HookUserMessage(key_hint_text_user_message_id, key_hint_text_hook, false);

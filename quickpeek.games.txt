@@ -159,7 +159,7 @@
 	{
 		"#supported"
 		{
-			"engine"	"sdk2006"
+			"engine"	"original"
 		}
 		
 		"Offsets"
