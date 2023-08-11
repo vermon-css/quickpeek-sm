@@ -29,6 +29,12 @@
 				"linux"		"0xc"
 				"windows"	"0xc"
 			}
+
+			"base_client_entity_index"
+			{
+				"linux"		"0x10"
+				"windows"	"0x10"
+			}
 			
 			"base_client_delta_tick"
 			{

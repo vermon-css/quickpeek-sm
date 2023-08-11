@@ -1,5 +1,5 @@
 #include <sourcemod>
-#include <dhooks>
+#include <sdktools>
 #include <clientprefs>
 
 #define JL_OPCODE 0x8c
@@ -7,12 +7,6 @@
 #define NOP_OPCODE 0x90
 
 #define EF_NODRAW 32
-#define CLIENTMOD_KEY_HINT_TEXT_ID 34
-#define MSG_GROUP_USER_MESSAGES 6
-#define MAX_USER_MSG_DATA 255
-#define HUD_MSG_MAX_CHANNELS 6
-#define HINT_TEXT_TIME 4
-#define KEY_HINT_TEXT_TIME 7
 
 public Plugin myinfo = {
 	name = "QuickPeek",
@@ -32,36 +26,19 @@ enum {
 	ACTION_NEXT_TARGET_OR_STOP
 }
 
-enum struct HudTextParams {
-	float x;
-	float y;
-	float hold_time;
-	int color1[4];
-	int color2[4];
-	int effect;
-	float fx_time;
-	float fade_in;
-	float fade_out;
-}
-
 enum struct Offsets {
-	int base_client_client_slot;
 	int base_client_entity_index;
 	int base_client_delta_tick;
 	int base_client_snapshot_interval;
-	int svc_user_message_msg_type;
 	int base_player_delay;
 	int base_player_replay_end;
 	int base_player_replay_entity;
-	int base_client_shift;
 }
 
 Offsets offsets;
 
 // SDKCall handles
 Handle get_client;
-Handle send_net_msg;
-Handle net_message_get_group;
 Handle send_weapon_anim;
 
 // since different engines have their own values, we need to setup it at runtime
@@ -77,9 +54,6 @@ ConVar sv_client_max_interp_ratio;
 
 Handle sync_hud;
 
-// used for skipping plugin related messages
-bool is_peek_message = false;
-
 int player_data_targets[MAXPLAYERS + 1][MAXPLAYERS];
 int player_data_targets_count[MAXPLAYERS];
 int player_data_last_target[MAXPLAYERS + 1];
@@ -91,18 +65,6 @@ bool player_data_is_changed_interp_ratio[MAXPLAYERS + 1];
 
 float player_data_interp_ratio[MAXPLAYERS + 1];
 bool player_data_block_angles[MAXPLAYERS + 1];
-
-char player_data_hint_text[MAXPLAYERS + 1][MAX_USER_MSG_DATA];
-char player_data_key_hint_text[MAXPLAYERS + 1][MAX_USER_MSG_DATA];
-char player_data_hud_msg_text[MAXPLAYERS + 1][HUD_MSG_MAX_CHANNELS][MAX_USER_MSG_DATA];
-HudTextParams player_data_hud_msg_params[MAXPLAYERS + 1][HUD_MSG_MAX_CHANNELS];
-float player_data_key_hint_text_end_time[MAXPLAYERS + 1];
-float player_data_hint_text_end_time[MAXPLAYERS + 1];
-float player_data_hud_msg_end_time[MAXPLAYERS + 1][HUD_MSG_MAX_CHANNELS];
-
-UserMsg hint_text_user_message_id;
-UserMsg key_hint_text_user_message_id;
-UserMsg hud_msg_user_message_id;
 
 public void OnPluginStart() {
 	GameData game_data = LoadGameConfigFile("quickpeek.games");
@@ -118,44 +80,17 @@ public void OnPluginStart() {
 		StoreToAddress(view_as<Address>(base_player_spawn_stop_replay_mode_call + i), NOP_OPCODE, NumberType_Int8, true);
 	}
 
-	hint_text_user_message_id = GetUserMessageId("HintText");
-	key_hint_text_user_message_id = GetUserMessageId("KeyHintText");
-	hud_msg_user_message_id = GetUserMessageId("HudMsg");
-
-	// ClientMod https://github.com/Reg1oxeN/ClientMod-Api/blob/0fb23fc94984d0dc89cbc6b7ec186d7e10074a95/scripting/include/clientmod/usermessage.inc#L1
-	if (key_hint_text_user_message_id == INVALID_MESSAGE_ID)
-		key_hint_text_user_message_id = view_as<UserMsg>(CLIENTMOD_KEY_HINT_TEXT_ID);
-
-	HookUserMessage(hint_text_user_message_id, hint_text_hook, false);
-	HookUserMessage(key_hint_text_user_message_id, key_hint_text_hook, false);
-	HookUserMessage(hud_msg_user_message_id, hud_msg_hook, false);
-
 	StartPrepSDKCall(SDKCall_Server);
 	PrepSDKCall_SetFromConf(game_data, SDKConf_Virtual, "base_server_get_client");
 	PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_ByValue);
 	PrepSDKCall_SetReturnInfo(SDKType_PlainOldData, SDKPass_ByValue);
 	get_client = EndPrepSDKCall();
 
-	StartPrepSDKCall(SDKCall_Raw);
-	PrepSDKCall_SetFromConf(game_data, SDKConf_Signature, "base_client_send_net_msg");
-	PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_ByValue);
-	PrepSDKCall_AddParameter(SDKType_Bool, SDKPass_ByValue);
-	PrepSDKCall_SetReturnInfo(SDKType_Bool, SDKPass_ByValue);
-	send_net_msg = EndPrepSDKCall();
-
-	StartPrepSDKCall(SDKCall_Raw);
-	PrepSDKCall_SetFromConf(game_data, SDKConf_Virtual, "i_net_message_get_group");
-	PrepSDKCall_SetReturnInfo(SDKType_PlainOldData, SDKPass_ByValue);
-	net_message_get_group = EndPrepSDKCall();
-
 	StartPrepSDKCall(SDKCall_Entity);
 	PrepSDKCall_SetFromConf(game_data, SDKConf_Virtual, "base_combat_weapon_send_weapon_anim");
 	PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_ByValue);
 	PrepSDKCall_SetReturnInfo(SDKType_Bool, SDKPass_ByValue);
 	send_weapon_anim = EndPrepSDKCall();
-
-	DHookSetup setup = DHookCreateFromConf(game_data, "game_client_send_net_msg");
-	DHookEnableDetour(setup, false, game_client_send_net_msg);
 	
 	ConVar sv_maxreplay = FindConVar("sv_maxreplay");
 	sv_maxreplay.FloatValue = 1.0;
@@ -208,12 +143,6 @@ public void OnClientPutInServer(int index) {
 	player_data_old_buttons[index] = 0;
 	player_data_queue_action[index] = ACTION_NONE;
 	player_data_sticky_target[index] = 0;
-
-	player_data_hint_text_end_time[index] = 0.0;
-	player_data_key_hint_text_end_time[index] = 0.0;
-
-	for (int i = 0; i < HUD_MSG_MAX_CHANNELS; ++i)
-		player_data_hud_msg_end_time[index][i] = 0.0;
 
 	if (!AreClientCookiesCached(index)) {
 		player_data_interp_ratio[index] = 2.0;
@@ -303,9 +232,6 @@ public Action OnPlayerRunCmd(int index, int& buttons, int& impulse, float vel[3]
 }
 
 public void OnGameFrame() {
-	// we set it here
-	is_peek_message = true;
-	
 	for (int i = 1; i <= MaxClients; ++i) {
 		if (!IsClientInGame(i))
 			continue;
@@ -420,44 +346,6 @@ public void OnGameFrame() {
 				}
 				else
 					switch_peek_target(i, new_target);
-
-				float cur_time = GetGameTime();
-
-				target = target ? target : i;
-				new_target = new_target ? new_target : i;
-				
-				if (cur_time < player_data_hint_text_end_time[new_target])
-					PrintHintText(i, player_data_hint_text[new_target]);
-				else
-					PrintHintText(i, "");
-	
-				if (cur_time < player_data_key_hint_text_end_time[new_target])
-					key_hint_text_message(i, player_data_key_hint_text[new_target])
-				else
-					key_hint_text_message(i, "");
-
-				for (int n = 0; n < HUD_MSG_MAX_CHANNELS; ++n) {
-					float diff_time = player_data_hud_msg_end_time[new_target][n] - GetGameTime();
-
-					if (diff_time > 0) {
-						HudTextParams params;
-						params = player_data_hud_msg_params[new_target][n];
-
-						/*
-						float fade_out = params.fade_out;
-						float fade_in = params.fade_in - params.hold_time - diff_time;
-						float fx_time = params.fx_time - params.hold_time - diff_time;
-						
-						if (fade_in < 0)
-							fade_out += fade_in;
-						*/
-
-						SetHudTextParamsEx(params.x, params.y, diff_time, params.color1, params.color2, params.effect, 0.0, 0.0, 0.0);
-						ShowHudText(i, n, player_data_hud_msg_text[new_target][n]);
-					}
-					else if (cur_time < player_data_hud_msg_end_time[target][n])
-						ShowHudText(i, n, "");
-				}
 			}
 			
 			player_data_queue_action[i] = ACTION_NONE;
@@ -488,8 +376,6 @@ public void OnGameFrame() {
 			player_data_hud_update_time[i] = GetGameTime() + 0.25;
 		}
 	}
-
-	is_peek_message = false;
 }
 
 Action quickpeek_console_command(int index, int args) {
@@ -553,108 +439,6 @@ Action unhold_quickpeek_command_listener(int index, const char[] command, int ar
 	return Plugin_Handled;
 }
 
-// we assume they surely will be sent
-Action hint_text_hook(UserMsg msg_id, BfRead msg, const int[] players, int players_num, bool reliable, bool init) {
-	if (is_peek_message)
-		return Plugin_Continue;
-		
-	for (int i = 0; i < players_num; ++i) {
-		int index = players[i];
-
-		if (!IsClientInGame(index))
-			continue;
-
-		msg.ReadString(player_data_hint_text[index], MAX_USER_MSG_DATA, false);
-		player_data_hint_text_end_time[index] = GetGameTime() + HINT_TEXT_TIME;
-	}
-	
-	return Plugin_Continue;
-}
-
-Action key_hint_text_hook(UserMsg msg_id, BfRead msg, const int[] players, int players_num, bool reliable, bool init) {
-	if (is_peek_message)
-		return Plugin_Continue;
-		
-	for (int i = 0; i < players_num; ++i) {
-		int index = players[i];
-
-		if (!IsClientInGame(index))
-			continue;
-
-		msg.ReadByte();
-		
-		msg.ReadString(player_data_key_hint_text[index], MAX_USER_MSG_DATA, false);
-		player_data_key_hint_text_end_time[index] = GetGameTime() + KEY_HINT_TEXT_TIME;
-	}
-	
-	return Plugin_Continue;
-}
-
-Action hud_msg_hook(UserMsg msg_id, BfRead msg, const int[] players, int players_num, bool reliable, bool init) {
-	if (is_peek_message)
-		return Plugin_Continue;
-
-	for (int i = 0; i < players_num; ++i) {
-		int index = players[i];
-
-		if (!IsClientInGame(index))
-			continue;
-
-		int channel = msg.ReadByte() % HUD_MSG_MAX_CHANNELS;
-
-		player_data_hud_msg_params[index][channel].x = msg.ReadFloat();
-		player_data_hud_msg_params[index][channel].y = msg.ReadFloat();
-		player_data_hud_msg_params[index][channel].color1[0] = msg.ReadByte();
-		player_data_hud_msg_params[index][channel].color1[1] = msg.ReadByte();
-		player_data_hud_msg_params[index][channel].color1[2] = msg.ReadByte();
-		player_data_hud_msg_params[index][channel].color1[3] = msg.ReadByte();
-		player_data_hud_msg_params[index][channel].color2[0] = msg.ReadByte();
-		player_data_hud_msg_params[index][channel].color2[1] = msg.ReadByte();
-		player_data_hud_msg_params[index][channel].color2[2] = msg.ReadByte();
-		player_data_hud_msg_params[index][channel].color2[3] = msg.ReadByte();
-		player_data_hud_msg_params[index][channel].effect = msg.ReadByte();
-		player_data_hud_msg_params[index][channel].fade_in = msg.ReadFloat();
-		player_data_hud_msg_params[index][channel].fade_out = msg.ReadFloat();
-		player_data_hud_msg_params[index][channel].hold_time = msg.ReadFloat();
-		player_data_hud_msg_params[index][channel].fx_time = msg.ReadFloat();
-
-		msg.ReadString(player_data_hud_msg_text[index][channel], MAX_USER_MSG_DATA, false);
-		player_data_hud_msg_end_time[index][channel] = GetGameTime() + player_data_hud_msg_params[index][channel].hold_time;
-	}
-
-	return Plugin_Continue;
-}
-
-// ig we can avoid the hook using s_MsgData in usual usermessages hooks
-MRESReturn game_client_send_net_msg(int this_pointer, DHookReturn ret, DHookParam params) {
-	int msg = params.Get(1);
-	int group = SDKCall(net_message_get_group, msg);
-
-	if (group == MSG_GROUP_USER_MESSAGES && !is_peek_message) {
-		UserMsg msg_type = view_as<UserMsg>(LoadFromAddress(view_as<Address>(msg + offsets.svc_user_message_msg_type), NumberType_Int32));
-
-		if (msg_type == hint_text_user_message_id || msg_type == key_hint_text_user_message_id || msg_type == hud_msg_user_message_id) {
-			// windows has some probiems with this pointer			
-			int index = LoadFromAddress(view_as<Address>(this_pointer - offsets.base_client_shift + offsets.base_client_client_slot), NumberType_Int32) + 1;
-
-			for (int i = 1; i <= MaxClients; ++i) {
-				if (!IsClientInGame(i) || !IsPlayerAlive(i))
-					continue;
-
-				if (peek_target(i) == index) {
-					int client = get_base_client(i);
-					SDKCall(send_net_msg, client + offsets.base_client_shift, msg, params.Get(2));
-				}
-			}
-
-			ret.Value = true;
-			return peek_target(index) ? MRES_Supercede : MRES_Ignored;
-		}
-	}
-	
-	return MRES_Ignored;
-}
-
 static bool is_valid_target(int index) {
 	return index && IsClientInGame(index) && IsPlayerAlive(index) && !(GetEntProp(index, Prop_Send, "m_fEffects") & EF_NODRAW) && (!IsFakeClient(index) || sv_stressbots.BoolValue)
 }
@@ -699,7 +483,8 @@ static void start_peeking(int index, int target) {
 
 	float interp_ratio = get_client_interp_ratio(index);
 	float snapshot_interval = LoadFromAddress(view_as<Address>(client + offsets.base_client_snapshot_interval), NumberType_Int32);
-
+	
+	
 	// ClientMod (v34)
 	if (sv_client_interpolate) {
 		GetClientInfo(index, "cl_interpolate", buf, sizeof(buf));
@@ -737,6 +522,7 @@ static void start_peeking(int index, int target) {
 		}
 		
 	}
+	
 }
 
 static void stop_peeking(int index) {
@@ -849,13 +635,6 @@ static void kill_cam_message(int index, int mode, int first, int second) {
 	EndMessage();
 }
 
-static void key_hint_text_message(int index, const char[] s) {
-	BfWrite bf = view_as<BfWrite>(StartMessageOne("KeyHintText", index, USERMSG_RELIABLE | USERMSG_BLOCKHOOKS));
-	bf.WriteByte(1);
-	bf.WriteString(s);
-	EndMessage();
-}
-
 // it fixes viewmodels dissapearing, e.g. usp
 static void fix_peek_weapon_anim(int index) {
 	int active_weapon = GetEntPropEnt(index, Prop_Send, "m_hActiveWeapon");
@@ -899,18 +678,13 @@ static float get_client_interp_ratio(int index) {
 
 static void parse_game_data(GameData gd) {
 	// we assume some variables are near
-	offsets.base_client_client_slot = gd.GetOffset("base_client_client_slot");
 	offsets.base_client_entity_index = gd.GetOffset("base_client_entity_index");
 	offsets.base_client_delta_tick = gd.GetOffset("base_client_delta_tick");
 	offsets.base_client_snapshot_interval = gd.GetOffset("base_client_snapshot_interval");
 
-	offsets.svc_user_message_msg_type = gd.GetOffset("svc_user_message_msg_type");
-	
 	offsets.base_player_delay = gd.GetOffset("base_player_delay");
 	offsets.base_player_replay_end = offsets.base_player_delay + 0x4;
 	offsets.base_player_replay_entity = offsets.base_player_replay_end + 0x4;
-	
-	offsets.base_client_shift = gd.GetOffset("base_client_shift");
 
 	char buf[32];
 	gd.GetKeyValue("act_vm_primary_attack", buf, sizeof(buf));
